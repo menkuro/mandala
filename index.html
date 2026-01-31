@@ -1104,6 +1104,85 @@ body:before{
 .codexCard .v{margin-top:4px; font-weight:950; font-size:12px; color:var(--text)}
 .codexCard .p{margin-top:6px; font-size:11px; color:var(--muted); white-space:pre-line; line-height:1.45}
 
+/* --- 曼荼羅帳：文庫UI（読みやすさ） --- */
+.codexCtrlRow{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px;}
+.codexCtrlRow input[type="search"]{
+  flex:1; min-width:160px;
+  padding:8px 10px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  color: var(--text);
+  outline: none;
+}
+.codexCtrlRow select{
+  padding:8px 10px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  color: var(--text);
+  outline: none;
+}
+.codexCtrlRow .count{margin-left:auto; font-size:11px; color:var(--muted)}
+@media (max-width: 720px){
+  .codexCtrlRow .count{margin-left:0}
+}
+.libList{
+  margin-top:10px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  overflow:auto;
+  max-height:54vh;
+  background: rgba(9,14,22,.35);
+}
+.libDay{
+  padding:8px 10px;
+  font-size:11px;
+  color: var(--muted);
+  background: rgba(255,255,255,.02);
+  border-top:1px solid rgba(255,255,255,.06);
+}
+.libItem{border-top:1px solid rgba(255,255,255,.06);}
+.libItem:first-child{border-top:0}
+.libHead{
+  width:100%;
+  text-align:left;
+  background: transparent;
+  border:0;
+  padding:10px 10px;
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:10px;
+  align-items:center;
+  cursor:pointer;
+}
+.libHead:hover{background: rgba(125,211,252,.06);}
+.libTitle{
+  font-weight:950;
+  font-size:12px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.libMeta{
+  font-size:11px;
+  color: var(--muted);
+  white-space:nowrap;
+}
+@media (max-width: 720px){
+  .libHead{grid-template-columns:auto 1fr; grid-template-rows:auto auto; gap:6px}
+  .libMeta{grid-column:2; grid-row:2; justify-self:start}
+}
+.libBody{
+  padding:0 10px 12px 10px;
+  color: var(--muted);
+  font-size:12px;
+  line-height:1.55;
+}
+.libBody .libFoot{margin-top:8px; opacity:.95}
+.libActions{display:flex; justify-content:flex-end; margin-top:8px;}
+
+
 
 /* --- 密教演出：曼荼羅（CSS） --- */
 .battleStage::before{
@@ -1574,10 +1653,6 @@ html[data-realm="deva"] .battleStage::before{ opacity:.16; filter:saturate(1.05)
 const SPEED_MAX_LABEL = 64;     // MAX label value (lighter than old 256)
 const SPEED_ALLOWED = [1, 2, 4, 8, SPEED_MAX_LABEL];
 
-// Global tuning (logs + sim). 1.0 means "exact" label pacing.
-// Slightly raised because each speed felt a bit slow.
-const SPEED_GLOBAL_SCALE = 1.5;
-
 const SPEED_SIM_BASE = 0.05;   // base internal sim speed at pace=1 (1×)
 const SPEED_PACE_MAX  = 240;     // cap (prevents overload at high speeds)
 // NOTE: user requested faster MAX; raised from 30->240
@@ -1593,8 +1668,8 @@ function speedPace(label){
 
 
 function effectiveSimSpeed(label){
-  const pace = speedPace(label) * SPEED_GLOBAL_SCALE;
-  return clamp(pace * SPEED_SIM_BASE, 0.01, (SPEED_PACE_MAX * SPEED_GLOBAL_SCALE) * SPEED_SIM_BASE);
+  const pace = speedPace(label);
+  return clamp(pace * SPEED_SIM_BASE, 0.01, SPEED_PACE_MAX * SPEED_SIM_BASE);
 }
   function effectiveSimSpeedScaled(label){
   const base = effectiveSimSpeed(label);
@@ -1904,6 +1979,73 @@ function ensureLibrary(){
   c.library = c.library || { docs:{}, order:[] };
   c.library.docs = c.library.docs || {};
   c.library.order = Array.isArray(c.library.order) ? c.library.order : [];
+}
+
+
+function migrateLibraryNoiseOnce(){
+  try{
+    ensureLibrary();
+    const lib = S.hero.codex.library;
+    if (!lib || lib._noiseMigrated) return;
+    lib._noiseMigrated = 1;
+
+    const docs = lib.docs || {};
+    const order = Array.isArray(lib.order) ? lib.order : [];
+    const out = [];
+    const seen = Object.create(null);
+
+    for (const k of order){
+      const d = docs[k];
+      if (!d) continue;
+
+      const body = String(d.body||"").trim();
+      const norm = body.replace(/\s+/g, " ").trim();
+
+      // Drop empty / placeholder noise.
+      if (!norm || norm === "記録"){
+        try{ delete docs[k]; }catch(_){}
+        continue;
+      }
+
+      let title = String(d.title||"").trim();
+      let kind  = String(d.kind||"").trim();
+
+      // Upgrade old "記録" entries into meaningful titles/kinds, and de-dup them.
+      if (title === "記録" && kind === "記録"){
+        if (seen[norm]){
+          try{ delete docs[k]; }catch(_){}
+          continue;
+        }
+        seen[norm] = 1;
+
+        let kind2 = "出来事";
+        let title2 = norm;
+
+        const m = norm.match(/^([^：:]{1,10})[：:]\s*(.+)$/);
+        if (m){
+          kind2 = (m[1] || "").trim() || kind2;
+          title2 = (m[2] || "").trim() || kind2;
+        }
+        if (/昇位/.test(norm)) kind2 = "進行";
+        else if (/^層\s*\d+/.test(norm)) kind2 = "進行";
+        else if (/調伏に至らず/.test(norm)) kind2 = "死亡";
+        else if (/^救済復活/.test(norm) || /^復活/.test(norm)) kind2 = "復活";
+        else if (/^未接続報酬/.test(norm)) kind2 = "報酬";
+        else if (/^宝函/.test(norm)) kind2 = "宝函";
+        else if (/^自動布施/.test(norm)) kind2 = "自動布施";
+        else if (/^(例外|描画例外|起動)/.test(norm)) kind2 = "システム";
+
+        if (title2.length > 46) title2 = title2.slice(0, 46) + "…";
+        d.kind = kind2;
+        d.title = title2;
+        d._norm = norm;
+      }
+
+      out.push(k);
+    }
+
+    lib.order = out;
+  }catch(_){}
 }
 
 // Strip HTML tags + decode basic entities (for archiving texts)
@@ -2476,6 +2618,7 @@ function ensureMikkyoFields(){
   try{ ensureLogIds(); }catch(_){ }
 
   try{ ensureMikkyoFields(); }catch(_){}
+  try{ migrateLibraryNoiseOnce(); }catch(_){}
   try{
     const tNow = now();
     const cdU = num(S.run && S.run.mantraCdUntil, 0);
@@ -4238,11 +4381,11 @@ S.run.active = false;
 
   // Live log pacing: show new cards one-by-one (reduces burst)
   // Pacing is tuned by simulation speed so the user can read it.
-  // Target: at 1× speed, show ~1 log line per second (scaled by SPEED_GLOBAL_SCALE).
+  // Target: at 1× speed, show ~1 log line per second.
   function logPumpMs(){
   try{
     const label = (S && S.run) ? Number(S.run.speed) : 1;
-    let pace = speedPace(label) * SPEED_GLOBAL_SCALE; // 1× baseline (scaled)
+    let pace = speedPace(label); // 1× => 1 log card / sec (baseline)
 
     // Keep logs and simulation in sync even when iOS calibration boosts sim speed.
     if (IS_IOS && S && S.run){
@@ -4538,13 +4681,66 @@ let logPending = [];     // [{id:number, node:HTMLElement}]
     if (state.log.length > cap) state.log.splice(0, state.log.length - cap);
   }
 
-  function logImportant(msg){
-    pushLog(S, compactMsgIfNeeded(msg));
-    try{ recordDoc("log:" + String(S.logSeq||0), "記録", stripHtmlToText(msg), "", "記録", ""); }catch(_){ }
-    dirtyLog = true;
-  }
+  // Archive only meaningful texts to the Codex library (avoid "記録" spam).
+function _archiveImportantLog(msgHtml){
+  try{
+    const txtRaw = stripHtmlToText(msgHtml);
+    const txt = String(txtRaw || "").trim();
+    if (!txt) return;
 
-  function log(msg){
+    const norm = txt.replace(/\s+/g, " ").trim();
+    if (!norm || norm === "記録") return;
+
+    // Keep only meaningful one-liners, unless they match key patterns.
+    const keepShort = /^(昇位|層|宝函|自動布施|復活|救済復活|未接続報酬|調伏に至らず|例外|描画例外|起動)/.test(norm);
+    if (!keepShort && norm.length < 18) return;
+
+    ensureLibrary();
+    const lib = S.hero.codex.library;
+    const docs = lib.docs || {};
+    const lastKey = (Array.isArray(lib.order) && lib.order.length) ? lib.order[0] : "";
+    if (lastKey && docs[lastKey] && String(docs[lastKey]._norm||"") === norm) return;
+
+    let kind = "出来事";
+    let title = norm;
+
+    // If the text is "X: Y" or "X：Y", treat X as kind.
+    const m = norm.match(/^([^：:]{1,10})[：:]\s*(.+)$/);
+    if (m){
+      kind = (m[1] || "").trim() || kind;
+      title = (m[2] || "").trim() || kind;
+    }
+
+    // Heuristics for better grouping
+    if (/昇位/.test(norm)) kind = "進行";
+    else if (/^層\s*\d+/.test(norm)) kind = "進行";
+    else if (/調伏に至らず/.test(norm)) kind = "死亡";
+    else if (/^救済復活/.test(norm) || /^復活/.test(norm)) kind = "復活";
+    else if (/^未接続報酬/.test(norm)) kind = "報酬";
+    else if (/^宝函/.test(norm)) kind = "宝函";
+    else if (/^自動布施/.test(norm)) kind = "自動布施";
+    else if (/^(例外|描画例外|起動)/.test(norm)) kind = "システム";
+
+    // Make title compact
+    if (title.length > 46) title = title.slice(0, 46) + "…";
+
+    const key = "log:" + String(S.logSeq||0);
+    recordDoc(key, title, txt, "", kind, "");
+    try{
+      const d = (S.hero.codex.library && S.hero.codex.library.docs) ? S.hero.codex.library.docs[key] : null;
+      if (d) d._norm = norm;
+    }catch(_){}
+  }catch(_){}
+}
+
+function logImportant(msg){
+  pushLog(S, compactMsgIfNeeded(msg));
+  _archiveImportantLog(msg);
+  dirtyLog = true;
+}
+
+function log(msg){
+
     // Log-lite mode: drop almost everything without inspecting the message.
     // This keeps MAX speed from freezing the browser.
     if (isLogLite()){
@@ -8391,26 +8587,21 @@ const baseLast = Math.max(curLast, logQueuedUpTo);
         return d.toLocaleString("ja-JP",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
       }catch(_){ return ''; }
     };
-    const libraryRows = order.slice(0, 120).map(k=>{
-      const d = docs[k]; if (!d) return '';
+    const libItems = order.map(k=>{
+      const d = docs[k]; if (!d) return null;
       const kind = String(d.kind||'').trim();
-      const lab = kind ? `<span class="pill">${escapeHtml(kind)}</span>` : '';
-      const ts = fmtTS(d.ts);
-      const title = escapeHtml(String(d.title||'—'));
-      const body = escapeHtml(String(d.body||'')).replace(/\n/g,'<br>');
-      const foot = escapeHtml(String(d.foot||'')).replace(/\n/g,'<br>');
+      const titleRaw = String(d.title||'—').trim();
+      const ts = num(d.ts, 0);
+      const time = fmtTS(ts);
+      const day = (()=>{ try{ const dd=new Date(ts); if(!isFinite(dd.getTime())) return ''; return dd.toLocaleDateString("ja-JP",{month:"2-digit",day:"2-digit"}); }catch(_){ return ''; } })();
       const realm = d.realmKey ? (REALM_LABEL[d.realmKey]||d.realmKey) : '';
-      const sub = [realm, ts].filter(Boolean).join(' / ');
-      return `<details class="slot" style="padding:8px;">
-        <summary style="cursor:pointer; list-style:none; display:flex; gap:8px; align-items:center;">
-          ${lab}
-          <span style="font-weight:950; font-size:12px;">${title}</span>
-          <span class="muted" style="margin-left:auto; font-size:11px;">${escapeHtml(sub)}</span>
-        </summary>
-        <div class="p" style="margin-top:8px;">${body||'<span class="muted">—</span>'}</div>
-        ${foot ? `<div class="p">${foot}</div>` : ``}
-      </details>`;
-    }).join('');
+      const bodyRaw = String(d.body||'');
+      const footRaw = String(d.foot||'');
+      const bodyHtml = escapeHtml(bodyRaw).replace(/\n/g,'<br>');
+      const footHtml = escapeHtml(footRaw).replace(/\n/g,'<br>');
+      const search = (kind+' '+titleRaw+' '+realm+' '+bodyRaw+' '+footRaw).toLowerCase();
+      return { id:k, ts, day, time, kind, title:(titleRaw||'—'), realm, bodyHtml, footHtml, search };
+    }).filter(Boolean);
 
     els.codexBody.innerHTML = `
       <div class="codexGrid">
@@ -8448,8 +8639,22 @@ const baseLast = Math.max(curLast, logQueuedUpTo);
         </div>
         <div class="codexCard" style="grid-column:1/-1;">
           <div class="k">文庫（出会った文章）</div>
-          <div class="p">章・儀礼・偈・記録など。最近の順に並びます（最大420件）。</div>
-          <div style="margin-top:6px; display:flex; flex-direction:column; gap:8px;">${libraryRows || '<span class="muted">—</span>'}</div>
+          <div class="p">章・儀礼・偈・重要な出来事などを保存。検索・絞り込み・展開ができます。</div>
+
+          <div class="codexCtrlRow">
+            <input id="codexLibSearch" type="search" placeholder="検索（題名/本文）" autocomplete="off" />
+            <select id="codexLibKind" aria-label="種別">
+              <option value="all">すべて</option>
+            </select>
+            <select id="codexLibSort" aria-label="並び替え">
+              <option value="new">新しい順</option>
+              <option value="old">古い順</option>
+            </select>
+            <span class="count" id="codexLibCount">—</span>
+          </div>
+
+          <div class="libList" id="codexLibList"><div class="muted" style="padding:10px;">—</div></div>
+          <div class="libActions"><button class="small" id="codexLibMore" type="button">もっと見る</button></div>
         </div>
       </div>
 `;
@@ -8460,6 +8665,9 @@ const baseLast = Math.max(curLast, logQueuedUpTo);
         btn.onclick = ()=>{ try{ showStoryInCodex(btn.dataset.story); }catch(_){} };
       });
     }catch(_){ }
+
+    // 文庫（検索/絞り込み）
+    try{ mountCodexLibrary(libItems); }catch(_){ }
 
     // 六印が揃っていれば「結願」を選べる
     try{
@@ -8481,6 +8689,130 @@ const baseLast = Math.max(curLast, logQueuedUpTo);
     els.codexOverlay.style.display = 'none';
     save();
     dirtyHUD = true;
+  }
+
+  // --------------------
+  // Codex Library UI
+  // --------------------
+  const codexLibState = { q:"", kind:"all", sort:"new", limit:60, openId:"" };
+
+  function mountCodexLibrary(items){
+    try{
+      const elList = document.getElementById("codexLibList");
+      const elQ    = document.getElementById("codexLibSearch");
+      const elKind = document.getElementById("codexLibKind");
+      const elSort = document.getElementById("codexLibSort");
+      const elCnt  = document.getElementById("codexLibCount");
+      const elMore = document.getElementById("codexLibMore");
+      if (!elList || !elQ || !elKind || !elSort || !elCnt || !elMore) return;
+
+      // 種別候補
+      const kinds = Array.from(new Set((items||[]).map(x=>x && x.kind).filter(Boolean)));
+      const pri = ["章","儀礼","偈","進行","戦闘","死亡","復活","宝函","自動布施","自動","報酬","システム","その他"];
+      kinds.sort((a,b)=>{
+        const ia = pri.indexOf(a); const ib = pri.indexOf(b);
+        const pa = (ia<0?999:ia), pb = (ib<0?999:ib);
+        if (pa!==pb) return pa-pb;
+        try{ return a.localeCompare(b,'ja'); }catch(_){ return String(a).localeCompare(String(b)); }
+      });
+
+      const current = kinds.includes(codexLibState.kind) ? codexLibState.kind : "all";
+      elKind.innerHTML = `<option value="all">すべて</option>` + kinds.map(k=>`<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join("");
+      elKind.value = current;
+
+      elSort.value = (codexLibState.sort==="old") ? "old" : "new";
+      elQ.value = codexLibState.q || "";
+
+      elMore.onclick = ()=>{
+        codexLibState.limit = clamp(int0(codexLibState.limit, 60) + 60, 20, 420);
+        renderCodexLibrary(items);
+      };
+      elQ.oninput = ()=>{
+        codexLibState.q = String(elQ.value||"");
+        codexLibState.limit = 60;
+        renderCodexLibrary(items);
+      };
+      elKind.onchange = ()=>{
+        codexLibState.kind = String(elKind.value||"all");
+        codexLibState.limit = 60;
+        codexLibState.openId = "";
+        renderCodexLibrary(items);
+      };
+      elSort.onchange = ()=>{
+        codexLibState.sort = (String(elSort.value)==="old") ? "old" : "new";
+        codexLibState.limit = 60;
+        codexLibState.openId = "";
+        renderCodexLibrary(items);
+      };
+
+      renderCodexLibrary(items);
+    }catch(_){}
+  }
+
+  function renderCodexLibrary(items){
+    const elList = document.getElementById("codexLibList");
+    const elCnt  = document.getElementById("codexLibCount");
+    const elMore = document.getElementById("codexLibMore");
+    if (!elList || !elCnt || !elMore) return;
+
+    let arr = Array.isArray(items) ? items.slice() : [];
+    const kind = String(codexLibState.kind||"all");
+    if (kind !== "all") arr = arr.filter(it => it && it.kind === kind);
+
+    const q = String(codexLibState.q||"").trim().toLowerCase();
+    if (q) arr = arr.filter(it => String(it.search||"").includes(q));
+
+    arr.sort((a,b)=>{
+      const at = num(a && a.ts, 0), bt = num(b && b.ts, 0);
+      return (codexLibState.sort==="old") ? (at-bt) : (bt-at);
+    });
+
+    const total = arr.length;
+    const limit = clamp(int0(codexLibState.limit, 60), 20, 420);
+    const shown = arr.slice(0, limit);
+
+    let html = "";
+    let lastDay = "";
+    for (const it of shown){
+      if (!it) continue;
+      const day = String(it.day||"");
+      if (day && day !== lastDay){
+        html += `<div class="libDay">${escapeHtml(day)}</div>`;
+        lastDay = day;
+      }
+      const pill = it.kind ? `<span class="pill">${escapeHtml(it.kind)}</span>` : "";
+      const metaParts = [];
+      if (it.realm) metaParts.push(it.realm);
+      if (it.time) metaParts.push(it.time);
+      const meta = metaParts.join(" / ");
+      const open = (codexLibState.openId === it.id);
+      html += `<div class="libItem" data-id="${escapeHtml(it.id)}">
+        <button class="libHead" type="button" data-open="${escapeHtml(it.id)}">
+          ${pill}
+          <span class="libTitle">${escapeHtml(it.title||"—")}</span>
+          <span class="libMeta">${escapeHtml(meta)}</span>
+        </button>
+        <div class="libBody" ${open ? "" : "hidden"}>
+          <div class="libText">${it.bodyHtml || '<span class="muted">—</span>'}</div>
+          ${it.footHtml ? `<div class="libFoot">${it.footHtml}</div>` : ``}
+        </div>
+      </div>`;
+    }
+    if (!html) html = `<div class="muted" style="padding:10px;">該当なし</div>`;
+    elList.innerHTML = html;
+
+    try{
+      elList.querySelectorAll(".libHead").forEach(btn=>{
+        btn.onclick = ()=>{
+          const id = String(btn.dataset.open||"");
+          codexLibState.openId = (codexLibState.openId === id) ? "" : id;
+          renderCodexLibrary(items);
+        };
+      });
+    }catch(_){}
+
+    elCnt.textContent = `${fmt(total)}件（表示 ${fmt(Math.min(limit,total))}件）`;
+    elMore.style.display = (total > limit) ? "inline-flex" : "none";
   }
 
   // --------------------
